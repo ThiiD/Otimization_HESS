@@ -1,7 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from pymoo.core.problem import ElementwiseProblem
-from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.algorithms.soo.nonconvex.ga import GA
+from pymoo.operators.sampling.rnd import IntegerRandomSampling
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.operators.mutation.pm import PM
+from pymoo.termination import get_termination
+from pymoo.optimize import minimize
 
 from pymoo.core.problem import ElementwiseProblem
 
@@ -63,7 +68,7 @@ class MyProblem(ElementwiseProblem):
 
     def __init__(self):
         super().__init__(n_var=2,  # Np_b e Np_uc
-                         n_obj=4,   # Custo total, Volume total, Peso total e Corrente máxima
+                         n_obj=1,   # Função objetivo combinada
                          n_ieq_constr=0,  # Sem restrições
                          xl=np.array([1, 1]),  # Mínimo de 1 para cada variável
                          xu=np.array([10, 10]),  # Máximo de 10 para cada variável
@@ -98,22 +103,23 @@ class MyProblem(ElementwiseProblem):
         total_baterias = Np_b * Nm_b * Ns_b
         total_supercaps = Np_uc * Nm_uc * Ns_uc
 
-        # Cálculo do custo total (em dólares) - peso 0.3
+        # Cálculo do custo total (em dólares)
         f1 = (total_baterias * Pb + total_supercaps * Puc) / self.custo_ref * self.weights[0]
 
-        # Cálculo do volume total (em L) - peso 0.3
+        # Cálculo do volume total (em L)
         f2 = (total_baterias * Vb + total_supercaps * Vuc) / self.volume_ref * self.weights[1]
 
-        # Cálculo do peso total (em kg) - peso 0.2
+        # Cálculo do peso total (em kg)
         f3 = (total_baterias * Wb + total_supercaps * Wuc) / self.peso_ref * self.weights[2]
 
-        # Cálculo da corrente máxima total (em A) - peso 0.2
-        # Corrente máxima da bateria
+        # Cálculo da corrente máxima total (em A)
         I_bmax = Np_b * Cap_b * T_xb
-        # Corrente máxima do supercapacitor
         I_ucmax = Np_uc * Cap_uc * T_xuc
-        # Corrente máxima total (normalizada e negativa para maximizar)
         f4 = -(I_bmax + I_ucmax) / self.corrente_ref * self.weights[3]
+
+        # Função objetivo combinada
+        out["F"] = [f1 + f2 + f3 + f4]  # Objetivo único combinado
+        out["G"] = []  # Sem restrições
 
         # Print de debug para a primeira avaliação
         if not hasattr(self, 'debug_printed'):
@@ -136,31 +142,17 @@ class MyProblem(ElementwiseProblem):
             print(f"Corrente máxima total: {5.0 * Cap_b * T_xb + 5.0 * Cap_uc * T_xuc}")
             self.debug_printed = True
 
-        out["F"] = [f1, f2, f3, f4]  # Objetivos normalizados e ponderados
-        out["G"] = []  # Sem restrições
-
-
 problem = MyProblem()
 
-from pymoo.algorithms.moo.nsga2 import NSGA2
-from pymoo.operators.sampling.rnd import IntegerRandomSampling
-from pymoo.operators.crossover.sbx import SBX
-from pymoo.operators.mutation.pm import PM
-
-algorithm = NSGA2(
+algorithm = GA(
     pop_size=200,
-    n_offsprings=100,
     sampling=IntegerRandomSampling(),
     crossover=SBX(prob=0.9, eta=15),
     mutation=PM(eta=15, prob=0.2),
     eliminate_duplicates=True
 )
 
-from pymoo.termination import get_termination
-
-termination = get_termination("n_gen", 200)  # Aumentado para 200 gerações
-
-from pymoo.optimize import minimize
+termination = get_termination("n_gen", 200)
 
 res = minimize(problem,
                algorithm,
@@ -178,44 +170,44 @@ print(f'F: {F}')
 # Visualização dos resultados
 plt.figure(figsize=(10, 8))
 ax = plt.axes(projection='3d')
-if F is not None:
-    # Convertendo os valores normalizados de volta para os valores originais
-    F_original = F.copy()
-    F_original[:, 0] *= problem.custo_ref
-    F_original[:, 1] *= problem.volume_ref
-    F_original[:, 2] *= problem.peso_ref
-    F_original[:, 3] *= -problem.corrente_ref  # Invertendo o sinal negativo
-    ax.scatter(F_original[:, 0], F_original[:, 1], F_original[:, 2], c='blue', marker='o')
+
+# Calculando os valores originais para a solução otimizada
+Np_b = int(round(X[0]))
+Np_uc = int(round(X[1]))
+total_baterias = Np_b * Nm_b * Ns_b
+total_supercaps = Np_uc * Nm_uc * Ns_uc
+
+custo = total_baterias * Pb + total_supercaps * Puc
+volume = total_baterias * Vb + total_supercaps * Vuc
+peso = total_baterias * Wb + total_supercaps * Wuc
+corrente = Np_b * Cap_b * T_xb + Np_uc * Cap_uc * T_xuc
+
+ax.scatter(custo, volume, peso, c='red', marker='o', s=100)
 ax.set_xlabel('Custo Total ($)')
 ax.set_ylabel('Volume Total (L)')
 ax.set_zlabel('Peso Total (kg)')
-ax.set_title('Espaço de Objetivos')
-plt.show(block = False)
+ax.set_title('Solução Otimizada')
+plt.show(block=False)
 
 # Visualização do espaço de design
 plt.figure(figsize=(7, 5))
-# Convertendo os valores para inteiros antes de plotar
-X_int = np.round(X).astype(int)
-plt.scatter(X_int[:, 0], X_int[:, 1], s=30, facecolors='r', edgecolors='r', zorder = 3)
+plt.scatter(X[0], X[1], s=100, facecolors='r', edgecolors='r', zorder=3)
 plt.xlabel('Número de Baterias em Paralelo')
 plt.ylabel('Número de Supercapacitores em Paralelo')
 plt.title("Espaço de Design")
-# Adicionando grade para melhor visualização dos valores inteiros
-plt.grid(zorder = 1)
-# Definindo os ticks dos eixos para mostrar apenas valores inteiros
+plt.grid(zorder=1)
 plt.xticks(np.arange(1, 11, 1))
 plt.yticks(np.arange(1, 11, 1))
 
 # Imprimir resultados
 print("\nResultados da Otimização:")
 print("------------------------")
-for i in range(min(10, len(X))):  # Mostrar as 10 primeiras soluções
-    print(f"\nSolução {i+1}:")
-    print(f"Número de baterias em paralelo: {int(round(X[i,0]))}")
-    print(f"Número de supercapacitores em paralelo: {int(round(X[i,1]))}")
-    print(f"Custo Total: ${int(round(F[i,0] * problem.custo_ref))}")
-    print(f"Volume Total: {int(round(F[i,1] * problem.volume_ref))} L")
-    print(f"Peso Total: {int(round(F[i,2] * problem.peso_ref))} kg")
-    print(f"Corrente Máxima Total: {int(round(-F[i,3] * problem.corrente_ref))} A")  # Invertendo o sinal negativo
+print("\nSolução Otimizada:")
+print(f"Número de baterias em paralelo: {Np_b}")
+print(f"Número de supercapacitores em paralelo: {Np_uc}")
+print(f"Custo Total: ${int(round(custo))}")
+print(f"Volume Total: {int(round(volume))} L")
+print(f"Peso Total: {int(round(peso))} kg")
+print(f"Corrente Máxima Total: {int(round(corrente))} A")
 
-plt.show(block = True)
+plt.show(block=True)
