@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 from pymoo.core.problem import ElementwiseProblem
 from pymoo.algorithms.moo.nsga2 import NSGA2
 
-import numpy as np
 from pymoo.core.problem import ElementwiseProblem
 
 # Definição dos parametros do problema
@@ -21,10 +20,10 @@ Nm_b = 24               # Número de módulos de baterias
 Ns_uc = 16              # Número de supercapacitores em serie
 Nm_uc = 20              # Número de módulos de supercapacitores
 
-Cap_b = 40.0          # Capacidade da bateria em Ah
-T_xb = 6              # Multiplicador da capacidade da bateria
-Cap_uc = 200.0        # Capacidade do supercapacitor em Ah
-T_xuc = 6            # Multiplicador da capacidade do supercapacitor
+Cap_b = 40.0            # Capacidade da bateria em Ah
+T_xb = 6                # Multiplicador da capacidade da bateria
+Cap_uc = 200.0          # Capacidade do supercapacitor em Ah
+T_xuc = 6               # Multiplicador da capacidade do supercapacitor
 
 
 # Definição do problema de otimização
@@ -69,6 +68,26 @@ class MyProblem(ElementwiseProblem):
                          xl=np.array([1, 1]),  # Mínimo de 1 para cada variável
                          xu=np.array([10, 10]),  # Máximo de 10 para cada variável
                          type_var=np.int64)  # Especificando que as variáveis são inteiras
+        
+        # Pesos para cada função objetivo
+        self.weights = np.array([0.01, 0.01, 0.01, 0.97])  # Soma deve ser 1.0 (Custo, Volume, Peso, Corrente)
+        
+        # Calculando valores de referência para normalização usando xl e xu
+        # Custo máximo possível
+        self.custo_ref = (self.xu[0] * Nm_b * Ns_b * Pb + 
+                         self.xu[1] * Nm_uc * Ns_uc * Puc)
+        
+        # Volume máximo possível
+        self.volume_ref = (self.xu[0] * Nm_b * Ns_b * Vb + 
+                          self.xu[1] * Nm_uc * Ns_uc * Vuc)
+        
+        # Peso máximo possível
+        self.peso_ref = (self.xu[0] * Nm_b * Ns_b * Wb + 
+                        self.xu[1] * Nm_uc * Ns_uc * Wuc)
+        
+        # Corrente máxima possível
+        self.corrente_ref = (self.xu[0] * Cap_b * T_xb + 
+                            self.xu[1] * Cap_uc * T_xuc)
 
     def _evaluate(self, x, out, *args, **kwargs):
         # Variáveis de decisão (garantindo valores inteiros)
@@ -79,22 +98,22 @@ class MyProblem(ElementwiseProblem):
         total_baterias = Np_b * Nm_b * Ns_b
         total_supercaps = Np_uc * Nm_uc * Ns_uc
 
-        # Cálculo do custo total (em dólares)
-        f1 = total_baterias * Pb + total_supercaps * Puc
+        # Cálculo do custo total (em dólares) - peso 0.3
+        f1 = (total_baterias * Pb + total_supercaps * Puc) / self.custo_ref * self.weights[0]
 
-        # Cálculo do volume total (em L)
-        f2 = total_baterias * Vb + total_supercaps * Vuc
+        # Cálculo do volume total (em L) - peso 0.3
+        f2 = (total_baterias * Vb + total_supercaps * Vuc) / self.volume_ref * self.weights[1]
 
-        # Cálculo do peso total (em kg)
-        f3 = total_baterias * Wb + total_supercaps * Wuc
+        # Cálculo do peso total (em kg) - peso 0.2
+        f3 = (total_baterias * Wb + total_supercaps * Wuc) / self.peso_ref * self.weights[2]
 
-        # Cálculo da corrente máxima total (em A)
+        # Cálculo da corrente máxima total (em A) - peso 0.2
         # Corrente máxima da bateria
         I_bmax = Np_b * Cap_b * T_xb
         # Corrente máxima do supercapacitor
         I_ucmax = Np_uc * Cap_uc * T_xuc
-        # Corrente máxima total (não linear devido à combinação)
-        f4 = -(I_bmax + I_ucmax)  # Negativo porque queremos maximizar
+        # Corrente máxima total (normalizada e negativa para maximizar)
+        f4 = -(I_bmax + I_ucmax) / self.corrente_ref * self.weights[3]
 
         # Print de debug para a primeira avaliação
         if not hasattr(self, 'debug_printed'):
@@ -117,7 +136,7 @@ class MyProblem(ElementwiseProblem):
             print(f"Corrente máxima total: {5.0 * Cap_b * T_xb + 5.0 * Cap_uc * T_xuc}")
             self.debug_printed = True
 
-        out["F"] = [f1, f2, f3, f4]  # Objetivos a serem minimizados (f4 é negativo para maximizar)
+        out["F"] = [f1, f2, f3, f4]  # Objetivos normalizados e ponderados
         out["G"] = []  # Sem restrições
 
 
@@ -160,29 +179,43 @@ print(f'F: {F}')
 plt.figure(figsize=(10, 8))
 ax = plt.axes(projection='3d')
 if F is not None:
-    ax.scatter(F[:, 0], F[:, 1], F[:, 2], c='blue', marker='o')
+    # Convertendo os valores normalizados de volta para os valores originais
+    F_original = F.copy()
+    F_original[:, 0] *= problem.custo_ref
+    F_original[:, 1] *= problem.volume_ref
+    F_original[:, 2] *= problem.peso_ref
+    F_original[:, 3] *= -problem.corrente_ref  # Invertendo o sinal negativo
+    ax.scatter(F_original[:, 0], F_original[:, 1], F_original[:, 2], c='blue', marker='o')
 ax.set_xlabel('Custo Total ($)')
 ax.set_ylabel('Volume Total (L)')
 ax.set_zlabel('Peso Total (kg)')
 ax.set_title('Espaço de Objetivos')
-plt.show()
+plt.show(block = False)
 
 # Visualização do espaço de design
 plt.figure(figsize=(7, 5))
-plt.scatter(X[:, 0], X[:, 1], s=30, facecolors='none', edgecolors='r')
+# Convertendo os valores para inteiros antes de plotar
+X_int = np.round(X).astype(int)
+plt.scatter(X_int[:, 0], X_int[:, 1], s=30, facecolors='r', edgecolors='r', zorder = 3)
 plt.xlabel('Número de Baterias em Paralelo')
 plt.ylabel('Número de Supercapacitores em Paralelo')
 plt.title("Espaço de Design")
-plt.show()
+# Adicionando grade para melhor visualização dos valores inteiros
+plt.grid(zorder = 1)
+# Definindo os ticks dos eixos para mostrar apenas valores inteiros
+plt.xticks(np.arange(1, 11, 1))
+plt.yticks(np.arange(1, 11, 1))
 
 # Imprimir resultados
 print("\nResultados da Otimização:")
 print("------------------------")
 for i in range(min(10, len(X))):  # Mostrar as 10 primeiras soluções
     print(f"\nSolução {i+1}:")
-    print(f"Número de baterias em paralelo: {X[i,0]:.4f}")
-    print(f"Número de supercapacitores em paralelo: {X[i,1]:.4f}")
-    print(f"Custo Total: ${F[i,0]:.2f}")
-    print(f"Volume Total: {F[i,1]:.4f} L")
-    print(f"Peso Total: {F[i,2]:.4f} kg")
-    print(f"Corrente Máxima Total: {-F[i,3]:.4f} A")  # Negativo porque f4 é negativo
+    print(f"Número de baterias em paralelo: {int(round(X[i,0]))}")
+    print(f"Número de supercapacitores em paralelo: {int(round(X[i,1]))}")
+    print(f"Custo Total: ${int(round(F[i,0] * problem.custo_ref))}")
+    print(f"Volume Total: {int(round(F[i,1] * problem.volume_ref))} L")
+    print(f"Peso Total: {int(round(F[i,2] * problem.peso_ref))} kg")
+    print(f"Corrente Máxima Total: {int(round(-F[i,3] * problem.corrente_ref))} A")  # Invertendo o sinal negativo
+
+plt.show(block = True)
