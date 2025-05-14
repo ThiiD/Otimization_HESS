@@ -75,7 +75,7 @@ class MyProblem(ElementwiseProblem):
                          type_var=np.int64)  # Especificando que as variáveis são inteiras
         
         # Pesos para cada função objetivo
-        self.weights = np.array([0.01, 0.01, 0.01, 0.97])  # Soma deve ser 1.0 (Custo, Volume, Peso, Corrente)
+        self.weights = np.array([0.15, 0.3, 0.15, 0.4])  # Soma deve ser 1.0 (Custo, Volume, Peso, Corrente)
         
         # Calculando valores de referência para normalização usando xl e xu
         # Custo máximo possível
@@ -198,6 +198,8 @@ plt.title("Espaço de Design")
 plt.grid(zorder=1)
 plt.xticks(np.arange(1, 11, 1))
 plt.yticks(np.arange(1, 11, 1))
+plt.xlim(problem.xl[0]-1, problem.xu[0]+1)
+plt.ylim(problem.xl[1]-1, problem.xu[1]+1)
 
 # Imprimir resultados
 print("\nResultados da Otimização:")
