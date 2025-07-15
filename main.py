@@ -243,4 +243,45 @@ for i in range(min(10, len(X))):  # Mostrar as 10 primeiras soluções
     print(f"Corrente Máxima Total: {int(round(-F[i,3] * problem.corrente_ref))} A")
     print(f"Energia Rejeitada Total: {int(round(F[i,4] * problem.energy_reject_ref))} Wh")
 
+plt.show(block = False)
+
+# Implementar o MCDM
+print(f'F.min(): {F.min()}')
+print(f'F.max(): {F.max()}')
+print(f'F.min(axis=0): {F.min(axis=0)}')
+print(f'F.max(axis=0): {F.max(axis=0)}')
+approx_ideal = F.min(axis=0)
+approx_nadir = F.max(axis=0)
+
+plt.figure(figsize=(10, 8))
+ax = plt.axes(projection='3d')
+if F is not None:
+    # Convertendo os valores normalizados de volta para os valores originais
+    F_original = F.copy()
+    F_original[:, 0] *= problem.custo_ref
+    approx_ideal[0] *= problem.custo_ref
+    approx_nadir[0] *= problem.custo_ref
+
+    F_original[:, 1] *= problem.volume_ref
+    approx_ideal[1] *= problem.volume_ref
+    approx_nadir[1] *= problem.volume_ref
+
+    F_original[:, 2] *= problem.peso_ref
+    approx_ideal[2] *= problem.peso_ref
+    approx_nadir[2] *= problem.peso_ref
+
+    F_original[:, 3] *= -problem.corrente_ref  # Invertendo o sinal negativo
+    approx_ideal[3] *= -problem.corrente_ref
+    approx_nadir[3] *= -problem.corrente_ref
+
+    F_original[:, 4] *= problem.energy_reject_ref  # Convertendo energia rejeitada
+    approx_ideal[4] *= problem.energy_reject_ref
+    approx_nadir[4] *= problem.energy_reject_ref
+    ax.scatter(F_original[:, 0], F_original[:, 1], F_original[:, 4], c='blue', marker='o')
+    ax.scatter(approx_ideal[0], approx_ideal[1], approx_ideal[4], facecolors='none', edgecolors='red', marker="*", s=100, label="Ideal Point (Approx)")
+    ax.scatter(approx_nadir[0], approx_nadir[1], approx_nadir[4], facecolors='none', edgecolors='black', marker="p", s=100, label="Nadir Point (Approx)")
+ax.set_xlabel('Custo Total ($)')
+ax.set_ylabel('Volume Total (L)')
+ax.set_zlabel('Energia Rejeitada (Wh)')
+ax.set_title('Espaço de Objetivos')
 plt.show(block = True)

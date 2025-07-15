@@ -1,0 +1,1 @@
+# Arquivo para implementar o Multi-Criteria Decision Making (MCDM)
