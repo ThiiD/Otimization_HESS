@@ -7,6 +7,27 @@ from pymoo.core.problem import ElementwiseProblem
 
 from simulation import Simulation
 
+# Parâmetros financeiros e operacionais
+preco_diesel = 6.00  # R$/litro
+rendimento_diesel = 3.0  # kWh/litro
+
+taxa_disponibilidade = 0.8  # 80% de disponibilidade diária
+duracao_ciclo_horas = 0.5  # 30 minutos por ciclo
+
+dias_por_mes = 30  # Considerando 30 dias por mês
+
+# Degradação dos componentes
+ciclos_bateria_vida = 10000  # ciclos até 80% da capacidade
+horas_supercap_vida = 100000  # horas até 80% da capacidade
+
+# Parâmetros financeiros para VPL
+horizonte_analise_meses = 12  # 10 anos
+
+# Taxa de desconto mensal (ex: 10% ao ano -> 0.10/12)
+taxa_desconto_anual = 0.10
+
+taxa_desconto_mensal = (1 + taxa_desconto_anual) ** (1/12) - 1
+
 # Definição dos parametros do problema
 Pb = 28.00              # Preço da bateria em dolares (Fonte: data_sources.xlsx)
 Puc= 53.75              # Preço do supercapacitor em dolares (Fonte: data_sources.xlsx)
@@ -65,54 +86,14 @@ class MyProblem(ElementwiseProblem):
 
     def __init__(self):
         super().__init__(n_var=2,  # Np_b e Np_uc
-                         n_obj=5,   # Custo total, Volume total, Peso total, Corrente máxima e Energia rejeitada
+                         n_obj=1,   # Agora apenas VPL
                          n_ieq_constr=0,  # Sem restrições
                          xl=np.array([1, 1]),  # Mínimo de 1 para cada variável
                          xu=np.array([10, 10]),  # Máximo de 10 para cada variável
                          type_var=np.int64)  # Especificando que as variáveis são inteiros
-        
-        # Pesos para cada função objetivo
-        self.weights = np.array([0.1, 0.25, 0.01, 0.25, 0.3])  # Soma deve ser 1.0 (Custo, Volume, Peso, Corrente, Energia rejeitada)
-        
-        # Calculando valores de referência para normalização usando xl e xu
-        # Custo máximo possível
-        self.custo_ref = (self.xu[0] * Nm_b * Ns_b * Pb + 
-                         self.xu[1] * Nm_uc * Ns_uc * Puc)
-        
-        # Volume máximo possível
-        self.volume_ref = (self.xu[0] * Nm_b * Ns_b * Vb + 
-                          self.xu[1] * Nm_uc * Ns_uc * Vuc)
-        
-        # Peso máximo possível
-        self.peso_ref = (self.xu[0] * Nm_b * Ns_b * Wb + 
-                        self.xu[1] * Nm_uc * Ns_uc * Wuc)
-        
-        # Corrente máxima possível
-        self.corrente_ref = (self.xu[0] * Cap_b * T_xb + 
-                            self.xu[1] * Cap_uc * T_xuc)
-        
-        # Dicionário para armazenar resultados das simulações
         self.simulation_cache = {}
 
-        # Calculando energia rejeitada de referência usando valores mínimos (pior caso)
-        print("Calculando energia rejeitada de referência (pior caso)...")
-        sim = Simulation()
-        sim.setParam_Batt(C=Cap_b, Ns=Ns_b, Np=self.xl[0], Nm=Nm_b, Vnom=3.2, SoC=50)
-        sim.setParam_UC(C=3400, Ns=Ns_uc, Np=self.xl[1], Nm=Nm_uc, Vnom=3, SoC=50)
-        
-        # Carregar dados do arquivo Excel   
-        data = r"data\CR-3112_28-09-24_AGGREGATED.xlsx"
-        sheet = "Dados"
-        
-        # Simular o sistema com o threshold especificado
-        sim.simulate(data, sheet, threshold=1000)
-        
-        # Armazenar a energia rejeitada total como referência
-        self.energy_reject_ref = sum(sim._p_reject) / 3600  # Convertendo de W para Wh
-        print(f"Energia rejeitada de referência (pior caso): {self.energy_reject_ref:.2f} Wh")
-
     def _evaluate(self, x, out, *args, **kwargs):
-        # Variáveis de decisão (garantindo valores inteiros)
         Np_b = int(round(x[0]))   # Número de baterias em paralelo
         Np_uc = int(round(x[1]))  # Número de supercapacitores em paralelo
 
@@ -120,44 +101,80 @@ class MyProblem(ElementwiseProblem):
         total_baterias = Np_b * Nm_b * Ns_b
         total_supercaps = Np_uc * Nm_uc * Ns_uc
 
-        # Cálculo do custo total (em dólares) - peso 0.1
-        f1 = (total_baterias * Pb + total_supercaps * Puc) / self.custo_ref * self.weights[0]
+        # Cálculo do custo inicial (investimento)
+        custo_inicial = (total_baterias * Pb + total_supercaps * Puc)
 
-        # Cálculo do volume total (em L) - peso 0.25
-        f2 = (total_baterias * Vb + total_supercaps * Vuc) / self.volume_ref * self.weights[1]
-
-        # Cálculo do peso total (em kg) - peso 0.01
-        f3 = (total_baterias * Wb + total_supercaps * Wuc) / self.peso_ref * self.weights[2]
-
-        # Cálculo da corrente máxima total (em A) - peso 0.25
-        I_bmax = Np_b * Cap_b * T_xb
-        I_ucmax = Np_uc * Cap_uc * T_xuc
-        f4 = -(I_bmax + I_ucmax) / self.corrente_ref * self.weights[3]
-
-        # Verifica se já temos o resultado da simulação no cache
+        # Simulação para calcular energia rejeitada
         cache_key = (Np_b, Np_uc)
         if cache_key not in self.simulation_cache:
-            # Simulação para calcular energia rejeitada
             sim = Simulation()
             sim.setParam_Batt(C=Cap_b, Ns=Ns_b, Np=Np_b, Nm=Nm_b, Vnom=3.2, SoC=50)
             sim.setParam_UC(C=3400, Ns=Ns_uc, Np=Np_uc, Nm=Nm_uc, Vnom=3, SoC=50)
-            
-            # Carregar dados do arquivo Excel   
             data = r"data\CR-3112_28-09-24_AGGREGATED.xlsx"
             sheet = "Dados"
-            
-            # Simular o sistema com o threshold especificado
             sim.simulate(data, sheet, threshold=1000)
-            
-            # Armazena o resultado no cache (convertendo para Wh)
-            self.simulation_cache[cache_key] = sum(sim._p_reject) / 3600
-        
-        # Usa o resultado do cache
-        energy_reject = self.simulation_cache[cache_key] / self.energy_reject_ref * self.weights[4]
-        f5 = energy_reject
+            energia_rejeitada = sum(sim._p_reject) / 3600  # Wh
+            # Energia absorvida é a soma das potências negativas (absorvidas) pelos sistemas
+            p_batt_arr = np.array(sim._p_batt)
+            p_uc_arr = np.array(sim._p_uc)
+            energia_absorvida = (
+                np.abs(np.sum(p_batt_arr[p_batt_arr < 0])) +
+                np.abs(np.sum(p_uc_arr[p_uc_arr < 0]))
+            ) / 3600  # Wh
+            self.simulation_cache[cache_key] = (energia_rejeitada, energia_absorvida)
+        else:
+            energia_rejeitada, energia_absorvida = self.simulation_cache[cache_key]
 
-        out["F"] = [f1, f2, f3, f4, f5]  # Objetivos normalizados e ponderados
-        out["G"] = []  # Sem restrições
+        # Energia absorvida por ciclo (Wh)
+        energia_absorvida_ciclo = energia_absorvida
+        print(f"Energia absorvida por ciclo: {energia_absorvida_ciclo} Wh")
+        # Número de ciclos por dia e por mês
+        horas_operacao_dia = 24 * taxa_disponibilidade
+        ciclos_por_dia = horas_operacao_dia / duracao_ciclo_horas
+        ciclos_por_mes = ciclos_por_dia * dias_por_mes
+
+        # Energia absorvida por mês (Wh -> kWh)
+        energia_absorvida_mes_kWh = (energia_absorvida_ciclo * ciclos_por_mes) / 1000
+
+        # Economia mensal de diesel
+        litros_diesel_economizados = energia_absorvida_mes_kWh / rendimento_diesel
+        economia_mensal = litros_diesel_economizados * preco_diesel
+
+        # Vida útil dos componentes em meses
+        vida_util_bateria_meses = ciclos_bateria_vida / ciclos_por_mes if ciclos_por_mes > 0 else horizonte_analise_meses
+        vida_util_supercap_meses = horas_supercap_vida / (horas_operacao_dia * dias_por_mes) if horas_operacao_dia > 0 else horizonte_analise_meses
+
+        # Fluxo de caixa mensal
+        fluxo_caixa = []
+        mes = 0
+        custo_bateria = total_baterias * Pb
+        custo_supercap = total_supercaps * Puc
+        proximo_reinv_bat = vida_util_bateria_meses
+        proximo_reinv_uc = vida_util_supercap_meses
+        while mes < horizonte_analise_meses:
+            if mes == 0:
+                fluxo_caixa.append(-custo_inicial)  # Investimento inicial
+            else:
+                # Substituição de bateria
+                if abs(mes - proximo_reinv_bat) < 1e-6:
+                    fluxo_caixa.append(-custo_bateria)
+                    proximo_reinv_bat += vida_util_bateria_meses
+                # Substituição de supercap
+                elif abs(mes - proximo_reinv_uc) < 1e-6:
+                    fluxo_caixa.append(-custo_supercap)
+                    proximo_reinv_uc += vida_util_supercap_meses
+                else:
+                    fluxo_caixa.append(economia_mensal)
+            mes += 1
+
+        # Cálculo do VPL
+        vpl = 0
+        for i, fc in enumerate(fluxo_caixa):
+            vpl += fc / ((1 + taxa_desconto_mensal) ** i)
+
+        # Como a otimização é de minimização, usamos o valor negativo do VPL
+        out["F"] = [-vpl]
+        out["G"] = []
 
 
 problem = MyProblem()
@@ -189,99 +206,300 @@ res = minimize(problem,
                save_history=True,
                verbose=True)
 
+# Após a otimização
 X = res.X
 F = res.F
 
 print(f'X: {X}')
 print(f'F: {F}')
 
-# Visualização dos resultados
-plt.figure(figsize=(10, 8))
-ax = plt.axes(projection='3d')
-if F is not None:
-    # Convertendo os valores normalizados de volta para os valores originais
-    F_original = F.copy()
-    F_original[:, 0] *= problem.custo_ref
-    F_original[:, 1] *= problem.volume_ref
-    F_original[:, 2] *= problem.peso_ref
-    F_original[:, 3] *= -problem.corrente_ref  # Invertendo o sinal negativo
-    F_original[:, 4] *= problem.energy_reject_ref  # Convertendo energia rejeitada
-    ax.scatter(F_original[:, 0], F_original[:, 1], F_original[:, 4], c='blue', marker='o')
-ax.set_xlabel('Custo Total ($)')
-ax.set_ylabel('Volume Total (L)')
-ax.set_zlabel('Energia Rejeitada (Wh)')
-ax.set_title('Espaço de Objetivos')
-plt.show(block = False)
-
 # Visualização do espaço de design
 plt.figure(figsize=(7, 5))
-# Convertendo os valores para inteiros antes de plotar
 X_int = np.round(X).astype(int)
-plt.scatter(X_int[:, 0], X_int[:, 1], s=30, facecolors='r', edgecolors='r', zorder = 3)
+plt.scatter(X_int[:, 0], X_int[:, 1], s=30, facecolors='r', edgecolors='r', zorder=3)
 plt.xlabel('Número de Baterias em Paralelo')
 plt.ylabel('Número de Supercapacitores em Paralelo')
 plt.title("Espaço de Design")
-# Adicionando grade para melhor visualização dos valores inteiros
-plt.grid(zorder = 1)
-# Definindo os ticks dos eixos para mostrar apenas valores inteiros
+plt.grid(zorder=1)
 plt.xticks(np.arange(1, 11, 1))
 plt.yticks(np.arange(1, 11, 1))
 plt.xlim(problem.xl[0]-1, problem.xu[0]+1)
 plt.ylim(problem.xl[1]-1, problem.xu[1]+1)
 
-
 # Imprimir resultados
 print("\nResultados da Otimização:")
 print("------------------------")
-for i in range(min(10, len(X))):  # Mostrar as 10 primeiras soluções
+for i in range(min(10, len(X))):  # Mostrar as 10 melhores soluções
     print(f"\nSolução {i+1}:")
     print(f"Número de baterias em paralelo: {int(round(X[i,0]))}")
     print(f"Número de supercapacitores em paralelo: {int(round(X[i,1]))}")
-    print(f"Custo Total: ${int(round(F[i,0] * problem.custo_ref))}")
-    print(f"Volume Total: {int(round(F[i,1] * problem.volume_ref))} L")
-    print(f"Peso Total: {int(round(F[i,2] * problem.peso_ref))} kg")
-    print(f"Corrente Máxima Total: {int(round(-F[i,3] * problem.corrente_ref))} A")
-    print(f"Energia Rejeitada Total: {int(round(F[i,4] * problem.energy_reject_ref))} Wh")
+    print(f"VPL (Valor Presente Líquido): R$ {(-F[i,0]):,.2f}")
 
-plt.show(block = False)
+# Selecionar a melhor solução (maior VPL)
+idx_best = np.argmin(F[:, 0])  # Menor valor negativo de F => maior VPL
+best_Np_b = int(round(X[idx_best, 0]))
+best_Np_uc = int(round(X[idx_best, 1]))
 
-# Implementar o MCDM
-print(f'F.min(): {F.min()}')
-print(f'F.max(): {F.max()}')
-print(f'F.min(axis=0): {F.min(axis=0)}')
-print(f'F.max(axis=0): {F.max(axis=0)}')
-approx_ideal = F.min(axis=0)
-approx_nadir = F.max(axis=0)
+# Rodar a simulação para a melhor solução
+sim = Simulation()
+sim.setParam_Batt(C=Cap_b, Ns=Ns_b, Np=best_Np_b, Nm=Nm_b, Vnom=3.2, SoC=50)
+sim.setParam_UC(C=3400, Ns=Ns_uc, Np=best_Np_uc, Nm=Nm_uc, Vnom=3, SoC=50)
+data = r"data\CR-3112_28-09-24_AGGREGATED.xlsx"
+sheet = "Dados"
 
-plt.figure(figsize=(10, 8))
-ax = plt.axes(projection='3d')
-if F is not None:
-    # Convertendo os valores normalizados de volta para os valores originais
-    F_original = F.copy()
-    F_original[:, 0] *= problem.custo_ref
-    approx_ideal[0] *= problem.custo_ref
-    approx_nadir[0] *= problem.custo_ref
+# Carregar dados do Excel para plotar potência, corrente e tensão de entrada
+import pandas as pd
+input_df = pd.read_excel(data, sheet_name="Log")
 
-    F_original[:, 1] *= problem.volume_ref
-    approx_ideal[1] *= problem.volume_ref
-    approx_nadir[1] *= problem.volume_ref
+time = np.arange(len(input_df))
 
-    F_original[:, 2] *= problem.peso_ref
-    approx_ideal[2] *= problem.peso_ref
-    approx_nadir[2] *= problem.peso_ref
+# Potência do diesel (entrada real do sistema)
+powers_diesel = input_df["fa08_m2amps"] * input_df["fa00_altoutvolts"]  # em Watts
 
-    F_original[:, 3] *= -problem.corrente_ref  # Invertendo o sinal negativo
-    approx_ideal[3] *= -problem.corrente_ref
-    approx_nadir[3] *= -problem.corrente_ref
+# Ajustar a simulação para usar a potência do diesel como entrada
+sim.simulate_custom_powers(powers_diesel)
 
-    F_original[:, 4] *= problem.energy_reject_ref  # Convertendo energia rejeitada
-    approx_ideal[4] *= problem.energy_reject_ref
-    approx_nadir[4] *= problem.energy_reject_ref
-    ax.scatter(F_original[:, 0], F_original[:, 1], F_original[:, 4], c='blue', marker='o')
-    ax.scatter(approx_ideal[0], approx_ideal[1], approx_ideal[4], facecolors='none', edgecolors='red', marker="*", s=100, label="Ideal Point (Approx)")
-    ax.scatter(approx_nadir[0], approx_nadir[1], approx_nadir[4], facecolors='none', edgecolors='black', marker="p", s=100, label="Nadir Point (Approx)")
-ax.set_xlabel('Custo Total ($)')
-ax.set_ylabel('Volume Total (L)')
-ax.set_zlabel('Energia Rejeitada (Wh)')
-ax.set_title('Espaço de Objetivos')
-plt.show(block = True)
+# O restante do código permanece igual, usando os resultados da simulação
+
+# Carregar dados do Excel para plotar potência, corrente e tensão de entrada
+import pandas as pd
+input_df = pd.read_excel(data, sheet_name="Log")
+
+time = np.arange(len(input_df))
+
+fig, axs = plt.subplots(3, 1, figsize=(12, 6), sharex=True)
+axs[0].plot(time, input_df["fa08_m2amps"] * input_df["fa00_altoutvolts"]/1000, label='Potência [kW]')
+axs[0].set_ylabel('Potência [kW]')
+axs[0].grid()
+axs[0].legend(loc="upper right")
+axs[0].set_title('Dados de Entrada do Ciclo (Arquivo Excel)')
+
+axs[1].plot(time, input_df['fa08_m2amps'], label='Corrente [A]', color='orange')
+axs[1].set_ylabel('Corrente [A]')
+axs[1].grid()
+axs[1].legend(loc='upper right')
+
+axs[2].plot(time, input_df['fa00_altoutvolts'], label='Tensão [V]', color='green')
+axs[2].set_ylabel('Tensão [V]')
+axs[2].set_xlabel('Tempo [s]')
+axs[2].set_xlim(0, len(input_df))
+axs[2].grid()
+axs[2].legend(loc='upper right')
+
+plt.tight_layout()
+plt.show(block=False)
+
+# Plotar potência (em MW) e corrente da bateria e do supercapacitor no mesmo gráfico, com dois eixos y
+sim_time = np.arange(len(sim._p_batt))
+fig, axs = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
+
+# Potência em kW
+p_batt_kw = np.array(sim._p_batt) / 1e3
+p_uc_kw = np.array(sim._p_uc) / 1e3
+
+color_batt = 'tab:blue'
+color_uc = 'tab:blue'
+color_batt_i = 'tab:orange'
+color_uc_i = 'tab:orange'
+
+# --- BATERIA ---
+axs[0].set_ylabel('Potência Bateria [kW]', color=color_batt)
+l1 = axs[0].plot(sim_time, p_batt_kw, label='Potência Bateria [kW]', color=color_batt)
+l_bat_rej = axs[0].plot(sim_time, np.array(sim._p_bat_reject), label='Potência Rejeitada Bateria [kW]', color='tab:red', linestyle=':')
+axs[0].tick_params(axis='y', labelcolor=color_batt)
+
+ax2_0 = axs[0].twinx()
+l2 = ax2_0.plot(sim_time, sim._i_bat, label='Corrente Bateria [A]', color=color_batt_i)
+ax2_0.set_ylabel('Corrente Bateria [A]', color=color_batt_i)
+ax2_0.tick_params(axis='y', labelcolor=color_batt_i)
+
+lns0 = l1 + l_bat_rej + l2
+labs0 = [l.get_label() for l in lns0]
+axs[0].legend(lns0, labs0, loc='upper right')
+axs[0].set_title('Bateria')
+axs[0].grid()
+
+# --- SUPERCAPACITOR ---
+axs[1].set_ylabel('Potência Supercapacitor [kW]', color=color_uc)
+l3 = axs[1].plot(sim_time, p_uc_kw, label='Potência Supercapacitor [kW]', color=color_uc)
+l_uc_rej = axs[1].plot(sim_time, np.array(sim._p_uc_reject), label='Potência Rejeitada Supercapacitor [kW]', color='tab:purple', linestyle=':')
+axs[1].tick_params(axis='y', labelcolor=color_uc)
+
+ax2_1 = axs[1].twinx()
+l4 = ax2_1.plot(sim_time, sim._i_uc, label='Corrente Supercapacitor [A]', color=color_uc_i)
+ax2_1.set_ylabel('Corrente Supercapacitor [A]', color=color_uc_i)
+ax2_1.tick_params(axis='y', labelcolor=color_uc_i)
+
+lns1 = l3 + l_uc_rej + l4
+labs1 = [l.get_label() for l in lns1]
+axs[1].legend(lns1, labs1, loc='upper right')
+axs[1].set_title('Supercapacitor')
+axs[1].grid()
+
+# --- POTÊNCIA REJEITADA TOTAL ---
+p_rej_total = np.array(sim._p_bat_reject) + np.array(sim._p_uc_reject)
+axs[2].plot(sim_time, p_rej_total, label='Potência Rejeitada Total [kW]', color='tab:orange')
+axs[2].set_ylabel('Potência Rejeitada Total [kW]')
+axs[2].set_xlabel('Amostra')
+axs[2].legend(loc='upper right')
+axs[2].set_title('Potência Rejeitada Total')
+axs[2].grid()
+
+plt.tight_layout()
+plt.show(block=False)
+
+# --- Gráfico SoC, Tensão e Corrente: Bateria x Supercapacitor ---
+fig, axs = plt.subplots(3, 2, figsize=(14, 8), sharex=True)
+
+# Linha 1: SoC
+axs[0, 0].plot(sim_time, sim._SoC, color='tab:blue', label='SoC Bateria')
+axs[0, 0].set_ylabel('SoC Bateria [%]')
+axs[0, 0].legend(loc='upper right')
+axs[0, 0].grid()
+
+axs[0, 1].plot(sim_time, sim._SoC_UC, color='tab:blue', label='SoC Supercapacitor')
+axs[0, 1].set_ylabel('SoC UC [%]')
+axs[0, 1].legend(loc='upper right')
+axs[0, 1].grid()
+
+# Linha 2: Tensão
+axs[1, 0].plot(sim_time, sim._v_banco_bat, color='tab:orange', label='Tensão Bateria')
+axs[1, 0].set_ylabel('Tensão Bateria [V]')
+axs[1, 0].legend(loc='upper right')
+axs[1, 0].grid()
+
+axs[1, 1].plot(sim_time, sim._v_banco_uc, color='tab:orange', label='Tensão Supercapacitor')
+axs[1, 1].set_ylabel('Tensão UC [V]')
+axs[1, 1].legend(loc='upper right')
+axs[1, 1].grid()
+
+# Linha 3: Corrente
+axs[2, 0].plot(sim_time, sim._i_bat, color='tab:green', label='Corrente Bateria')
+axs[2, 0].set_ylabel('Corrente Bateria [A]')
+axs[2, 0].set_xlabel('Amostra')
+axs[2, 0].legend(loc='upper right')
+axs[2, 0].grid()
+
+axs[2, 1].plot(sim_time, sim._i_uc, color='tab:green', label='Corrente Supercapacitor')
+axs[2, 1].set_ylabel('Corrente UC [A]')
+axs[2, 1].set_xlabel('Amostra')
+axs[2, 1].legend(loc='upper right')
+axs[2, 1].grid()
+
+plt.suptitle('SoC, Tensão e Corrente: Bateria (esq.) x Supercapacitor (dir.)')
+plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+plt.show(block=False)
+
+plt.figure(figsize=(12, 4))
+
+# Potência medida do sistema (entrada)
+pot_sistema = input_df["fa08_m2amps"] * input_df["fa00_altoutvolts"] / 1000  # kW
+plt.plot(time, pot_sistema, label='Potência Sistema (Diesel) [kW]', color='black')
+
+# Soma das potências simuladas (bateria + supercapacitor + rejeitada)
+pot_simulada = (np.array(sim._p_batt) + np.array(sim._p_uc) - np.array(p_rej_total) * 1000) / 1e3  # kW
+plt.plot(sim_time, pot_simulada, label='Potência Administrada Total [kW]', color='tab:blue', linestyle='--')
+
+plt.ylabel('Potência [kW]')
+plt.xlabel('Amostra')
+plt.title('Comparação: Potência do Sistema vs. Simulação')
+plt.legend(loc='upper right')
+plt.grid()
+plt.tight_layout()
+plt.show(block=True)
+
+
+# # --- Gráfico de Fluxo de Caixa Mensal (usando cashflow) ---
+# import cashflow
+# meses = np.arange(len(problem.fluxo_caixa))
+# cf = cashflow.CashFlow(problem.fluxo_caixa)
+# cf.plot()
+# plt.title('Fluxo de Caixa Mensal')
+# plt.xlabel('Meses')
+# plt.ylabel('Fluxo de Caixa (USD)')
+# plt.show(block=True)
+
+# # --- Gráfico de Degradação da Bateria ---
+# capacidade_bateria = np.ones(horizonte_analise_meses)
+# for i in range(horizonte_analise_meses):
+#     ciclos = i / vida_util_bateria_meses
+#     if ciclos <= 1:
+#         capacidade_bateria[i] = 1 - 0.2 * ciclos  # Linear até 80%
+#     else:
+#         capacidade_bateria[i] = 0.8  # Após vida útil, mantém 80%
+# plt.figure(figsize=(10, 4))
+# plt.plot(np.arange(horizonte_analise_meses), capacidade_bateria * 100)
+# plt.title('Degradação da Bateria ao Longo do Tempo')
+# plt.xlabel('Meses')
+# plt.ylabel('Capacidade Residual (%)')
+# plt.ylim(75, 105)
+# plt.grid()
+# plt.show(block=True)
+
+# # --- Gráfico de Degradação do Supercapacitor ---
+# capacidade_supercap = np.ones(horizonte_analise_meses)
+# for i in range(horizonte_analise_meses):
+#     horas = i / vida_util_supercap_meses
+#     if horas <= 1:
+#         capacidade_supercap[i] = 1 - 0.2 * horas  # Linear até 80%
+#     else:
+#         capacidade_supercap[i] = 0.8
+# plt.figure(figsize=(10, 4))
+# plt.plot(np.arange(horizonte_analise_meses), capacidade_supercap * 100, color='orange')
+# plt.title('Degradação do Supercapacitor ao Longo do Tempo')
+# plt.xlabel('Meses')
+# plt.ylabel('Capacidade Residual (%)')
+# plt.ylim(75, 105)
+# plt.grid()
+# plt.show(block=True)
+
+# # --- Gráfico de Potência e Corrente usando subplots ---
+# fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+# # Potência em kW
+# p_batt_kw = np.array(sim._p_batt) / 1e3
+# p_uc_kw = np.array(sim._p_uc) / 1e3
+
+# color_batt_p = 'tab:blue'
+# color_batt_i = 'tab:green'
+# color_uc_p = 'tab:red'
+# color_uc_i = 'tab:orange'
+
+# # --- BATERIA ---
+# ax1.set_ylabel('Potência Bateria (kW)', color=color_batt_p)
+# l1 = ax1.plot(sim_time, p_batt_kw, label='Potência Bateria (kW)', color=color_batt_p)
+# ax1.tick_params(axis='y', labelcolor=color_batt_p)
+
+# ax1b = ax1.twinx()
+# ax1b.set_ylabel('Corrente Bateria (A)', color=color_batt_i)
+# l2 = ax1b.plot(sim_time, sim._i_bat, label='Corrente Bateria (A)', color=color_batt_i, linestyle='--')
+# ax1b.tick_params(axis='y', labelcolor=color_batt_i)
+
+# # Legenda combinada
+# lns1 = l1 + l2
+# labs1 = [l.get_label() for l in lns1]
+# ax1.legend(lns1, labs1, loc='upper right')
+# ax1.set_title('Bateria')
+
+# # --- SUPERCAPACITOR ---
+# ax2.set_ylabel('Potência Supercapacitor (kW)', color=color_uc_p)
+# l3 = ax2.plot(sim_time, p_uc_kw, label='Potência Supercapacitor (kW)', color=color_uc_p)
+# ax2.tick_params(axis='y', labelcolor=color_uc_p)
+
+# ax2b = ax2.twinx()
+# ax2b.set_ylabel('Corrente Supercapacitor (A)', color=color_uc_i)
+# l4 = ax2b.plot(sim_time, sim._i_uc, label='Corrente Supercapacitor (A)', color=color_uc_i, linestyle='--')
+# ax2b.tick_params(axis='y', labelcolor=color_uc_i)
+
+# # Legenda combinada
+# lns2 = l3 + l4
+# labs2 = [l.get_label() for l in lns2]
+# ax2.legend(lns2, labs2, loc='upper right')
+# ax2.set_title('Supercapacitor')
+
+# plt.xlabel('Amostra')
+# plt.tight_layout()
+# plt.show(block=True)
+
+# --- Gráfico comparativo: Potência do sistema vs. soma das potências simuladas ---
+

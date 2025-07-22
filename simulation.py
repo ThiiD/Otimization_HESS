@@ -14,12 +14,14 @@ class Simulation():
         
         # Dados da bateria
         self._SoC = []
+        self._p_batt = []
         self._v_banco_bat = []
         self._i_bat = []
         self._p_bat_reject = []
 
         # Dados do supercapacitor
         self._v_banco_uc = []
+        self._p_uc = []
         self._i_uc = []
         self._SoC_UC = []
         self._p_uc_reject = []
@@ -175,7 +177,6 @@ class Simulation():
             
             # Atualiza supercapacitor
             i_uc, p_uc_reject_1 = self._uc.setCurrent(power_uc)
-            # sleep(1)
             SoC_uc, v_banco_uc, p_uc_reject_2, i_uc = self._uc.updateEnergy(i_uc, 1)
             p_uc_reject = p_uc_reject_1 + p_uc_reject_2
 
@@ -183,11 +184,13 @@ class Simulation():
             
             # Armazena resultados
             self._SoC.append(SoC)
+            self._p_batt.append(i_bat * v_banco_bat)  # Potência realmente fornecida pela bateria
             self._v_banco_bat.append(v_banco_bat)
             self._i_bat.append(i_bat)
             self._p_bat_reject.append(p_bat_reject)
 
             self._SoC_UC.append(SoC_uc)
+            self._p_uc.append(i_uc * v_banco_uc)  # Potência realmente fornecida pelo supercapacitor
             self._i_uc.append(i_uc)
             self._v_banco_uc.append(v_banco_uc)
             self._p_uc_reject.append(p_uc_reject)
@@ -197,6 +200,56 @@ class Simulation():
         # Plota resultados
         # print(self._SoC_UC)                                     # APAGAR DEPOIS
         #self.plot_results(data["Time"])
+
+    def simulate_custom_powers(self, powers, threshold=1000):
+        """Executa simulação usando um vetor de potência diretamente como entrada
+        :param powers: vetor de potência (em Watts)
+        :param threshold: limiar de potência para distribuição (W)
+        """
+        # Limpa resultados anteriores
+        self._SoC = []
+        self._p_batt = []
+        self._v_banco_bat = []
+        self._i_bat = []
+        self._p_bat_reject = []
+        self._v_banco_uc = []
+        self._p_uc = []
+        self._i_uc = []
+        self._SoC_UC = []
+        self._p_uc_reject = []
+        self._p_reject = []
+
+        # Simulação
+        for power in powers:
+            # Distribuição de potência
+            power_bat, power_uc = self.supervisory_control(power / 1000, threshold)  # supervisory_control espera kW
+
+            # Atualiza bateria
+            i_bat, p_bat_reject_1 = self._batt.setCurrent(power_bat)
+            SoC, v_banco_bat, p_bat_reject_2 = self._batt.updateEnergy(i_bat, 1)
+            p_bat_reject = p_bat_reject_1 + p_bat_reject_2
+
+            # Atualiza supercapacitor
+            i_uc, p_uc_reject_1 = self._uc.setCurrent(power_uc)
+            SoC_uc, v_banco_uc, p_uc_reject_2, i_uc = self._uc.updateEnergy(i_uc, 1)
+            p_uc_reject = p_uc_reject_1 + p_uc_reject_2
+
+            p_reject = p_bat_reject + p_uc_reject
+
+            # Armazena resultados
+            self._SoC.append(SoC)
+            self._p_batt.append(i_bat * v_banco_bat)  # Potência realmente fornecida pela bateria
+            self._v_banco_bat.append(v_banco_bat)
+            self._i_bat.append(i_bat)
+            self._p_bat_reject.append(p_bat_reject)
+
+            self._SoC_UC.append(SoC_uc)
+            self._p_uc.append(i_uc * v_banco_uc)  # Potência realmente fornecida pelo supercapacitor
+            self._i_uc.append(i_uc)
+            self._v_banco_uc.append(v_banco_uc)
+            self._p_uc_reject.append(p_uc_reject)
+
+            self._p_reject.append(p_reject)
 
     def supervisory_control(self, power: float, threshold : float) -> tuple[float, float]:
         """
