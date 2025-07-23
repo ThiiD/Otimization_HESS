@@ -135,17 +135,17 @@ class MyProblem(ElementwiseProblem):
         # Número de ciclos por dia e por mês
         horas_operacao_dia = 24 * taxa_disponibilidade
         ciclos_por_dia = horas_operacao_dia / duracao_ciclo_horas
-        ciclos_por_mes = ciclos_por_dia * dias_por_mes
+        self.ciclos_por_mes = ciclos_por_dia * dias_por_mes
 
         # Energia absorvida por mês (Wh -> kWh)
-        energia_absorvida_mes_kWh = (energia_absorvida_ciclo * ciclos_por_mes) / 1000
+        energia_absorvida_mes_kWh = (energia_absorvida_ciclo * self.ciclos_por_mes) / 1000
 
         # Economia mensal de diesel
         litros_diesel_economizados = energia_absorvida_mes_kWh / rendimento_diesel
         economia_mensal = litros_diesel_economizados * preco_diesel
 
         # Vida útil dos componentes em meses
-        vida_util_bateria_meses = ciclos_bateria_vida / ciclos_por_mes if ciclos_por_mes > 0 else horizonte_analise_meses
+        vida_util_bateria_meses = ciclos_bateria_vida / self.ciclos_por_mes if self.ciclos_por_mes > 0 else horizonte_analise_meses
         vida_util_supercap_meses = horas_supercap_vida / (horas_operacao_dia * dias_por_mes) if horas_operacao_dia > 0 else horizonte_analise_meses
 
         # Fluxo de caixa mensal
@@ -423,6 +423,10 @@ plt.show(block=False)
 
 plt.figure(figsize=(12, 4))
 
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ---------------------------------------------- Comparação entre a potência do diesel e a gerenciada ------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 # Potência medida do sistema (entrada)
 pot_sistema = input_df["fa08_m2amps"] * input_df["fa00_altoutvolts"] / 1000  # kW
 plt.plot(time, pot_sistema, label='Potência Sistema (Diesel) [kW]', color='black')
@@ -437,7 +441,7 @@ plt.title('Comparação: Potência do Sistema vs. Simulação')
 plt.legend(loc='upper right')
 plt.grid()
 plt.tight_layout()
-plt.show(block=True)
+plt.show(block=False)
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # ----------------------------------------------- Gráfico de Fluxo de Caixa Mensal (usando cashflow) -------------------------------------------------
@@ -460,11 +464,11 @@ else:
 # ----------------------------------------------- Gráfico de Degradação da Bateria ----------------------------------------------------------------
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-capacidade_bateria = np.ones(horizonte_analise_meses)
+capacidade_bateria = np.ones(horizonte_analise_meses)                       # Cria um vetor para análisar mes a mes a saude da bateria
 for i in range(horizonte_analise_meses):
-    ciclos = i / vida_util_bateria_meses
-    if ciclos <= 1:
-        capacidade_bateria[i] = 1 - 0.2 * ciclos  # Linear até 80%
+    porcentagem_de_ciclos = (i * sim.ciclos_por_mes) / ciclos_bateria_vida                                        
+    if porcentagem_de_ciclos <= 1:
+        capacidade_bateria[i] = 1 - 0.2 * porcentagem_de_ciclos                               # Linear até 80%
     else:
         capacidade_bateria[i] = 0.8  # Após vida útil, mantém 80%
 plt.figure(figsize=(10, 4))
