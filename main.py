@@ -29,24 +29,28 @@ taxa_desconto_anual = 0.10
 taxa_desconto_mensal = (1 + taxa_desconto_anual) ** (1/12) - 1
 
 # Definição dos parametros do problema
-Pb = 28.00              # Preço da bateria em dolares (Fonte: data_sources.xlsx)
-Puc= 53.75              # Preço do supercapacitor em dolares (Fonte: data_sources.xlsx)
+cot_dolar = 5.57            # 22/07/2025
+Pb_usd = 28.00              # Preço da bateria em dolares (Fonte: data_sources.xlsx)
+Puc_usd = 53.75             # Preço do supercapacitor em dolares (Fonte: data_sources.xlsx)
 
-Vb = 0.596              # Volume da bateria em L (Fonte: data_sources.xlsx)
-Vuc = 0.00837           # Volume do supercapacitor em L (Fonte: data_sources.xlsx)
+Pb = Pb_usd #* cot_dolar     # Preço da bateria em reais
+Puc = Puc_usd #* cot_dolar   # Preço do supercapacitor em reais
 
-Wb = 1.060              # Peso da bateria em kg (Fonte: data_sources.xlsx)
-Wuc = 0.460             # Peso do supercapacitor em kg (Fonte: data_sources.xlsx)
+Vb = 0.596                  # Volume da bateria em L (Fonte: data_sources.xlsx)
+Vuc = 0.00837               # Volume do supercapacitor em L (Fonte: data_sources.xlsx)
 
-Ns_b = 16               # Número de baterias em serie
-Nm_b = 24               # Número de módulos de baterias
-Ns_uc = 16              # Número de supercapacitores em serie
-Nm_uc = 20              # Número de módulos de supercapacitores
+Wb = 1.060                  # Peso da bateria em kg (Fonte: data_sources.xlsx)
+Wuc = 0.460                 # Peso do supercapacitor em kg (Fonte: data_sources.xlsx)
 
-Cap_b = 40.0            # Capacidade da bateria em Ah
-T_xb = 6                # Multiplicador da capacidade da bateria
-Cap_uc = 280.0          # Capacidade do supercapacitor em Ah
-T_xuc = 3               # Multiplicador da capacidade do supercapacitor
+Ns_b = 16                   # Número de baterias em serie
+Nm_b = 24                   # Número de módulos de baterias
+Ns_uc = 16                  # Número de supercapacitores em serie
+Nm_uc = 20                  # Número de módulos de supercapacitores
+
+Cap_b = 40.0                # Capacidade da bateria em Ah
+T_xb = 6                    # Multiplicador da capacidade da bateria
+Cap_uc = 280.0              # Capacidade do supercapacitor em Ah
+T_xuc = 3                   # Multiplicador da capacidade do supercapacitor
 
 
 # Definição do problema de otimização
@@ -127,7 +131,7 @@ class MyProblem(ElementwiseProblem):
 
         # Energia absorvida por ciclo (Wh)
         energia_absorvida_ciclo = energia_absorvida
-        print(f"Energia absorvida por ciclo: {energia_absorvida_ciclo} Wh")
+        print(f"Energia absorvida por ciclo (Np_b: {Np_b}, Np_uc: {Np_uc}): {energia_absorvida_ciclo} Wh")
         # Número de ciclos por dia e por mês
         horas_operacao_dia = 24 * taxa_disponibilidade
         ciclos_por_dia = horas_operacao_dia / duracao_ciclo_horas
@@ -172,10 +176,21 @@ class MyProblem(ElementwiseProblem):
         for i, fc in enumerate(fluxo_caixa):
             vpl += fc / ((1 + taxa_desconto_mensal) ** i)
 
+        print(f"VPL (Np_b: {Np_b}, Np_uc: {Np_uc}): {vpl}")
+        print(f'---------------------------------------------------------')
+
         # Como a otimização é de minimização, usamos o valor negativo do VPL
         out["F"] = [-vpl]
         out["G"] = []
+        
+        # Armazenar o fluxo de caixa se for a melhor solução até agora
+        if not hasattr(self, 'melhor_vpl') or vpl > self.melhor_vpl:
+            self.melhor_vpl = vpl
+            self.melhor_fluxo_caixa = fluxo_caixa.copy()
 
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Otimização ------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 problem = MyProblem()
 
@@ -213,7 +228,10 @@ F = res.F
 print(f'X: {X}')
 print(f'F: {F}')
 
-# Visualização do espaço de design
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Visualização do espaço de design -------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 plt.figure(figsize=(7, 5))
 X_int = np.round(X).astype(int)
 plt.scatter(X_int[:, 0], X_int[:, 1], s=30, facecolors='r', edgecolors='r', zorder=3)
@@ -235,7 +253,10 @@ for i in range(min(10, len(X))):  # Mostrar as 10 melhores soluções
     print(f"Número de supercapacitores em paralelo: {int(round(X[i,1]))}")
     print(f"VPL (Valor Presente Líquido): R$ {(-F[i,0]):,.2f}")
 
-# Selecionar a melhor solução (maior VPL)
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Seleção da melhor solução ------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 idx_best = np.argmin(F[:, 0])  # Menor valor negativo de F => maior VPL
 best_Np_b = int(round(X[idx_best, 0]))
 best_Np_uc = int(round(X[idx_best, 1]))
@@ -267,6 +288,10 @@ input_df = pd.read_excel(data, sheet_name="Log")
 
 time = np.arange(len(input_df))
 
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Gráfico de Potência, Corrente e Tensão de Entrada -------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------  
+
 fig, axs = plt.subplots(3, 1, figsize=(12, 6), sharex=True)
 axs[0].plot(time, input_df["fa08_m2amps"] * input_df["fa00_altoutvolts"]/1000, label='Potência [kW]')
 axs[0].set_ylabel('Potência [kW]')
@@ -289,7 +314,10 @@ axs[2].legend(loc='upper right')
 plt.tight_layout()
 plt.show(block=False)
 
-# Plotar potência (em MW) e corrente da bateria e do supercapacitor no mesmo gráfico, com dois eixos y
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Gráfico de Potência e Corrente usando subplots -------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 sim_time = np.arange(len(sim._p_batt))
 fig, axs = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
 
@@ -348,7 +376,10 @@ axs[2].grid()
 plt.tight_layout()
 plt.show(block=False)
 
-# --- Gráfico SoC, Tensão e Corrente: Bateria x Supercapacitor ---
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Gráfico SoC, Tensão e Corrente: Bateria x Supercapacitor -------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+
 fig, axs = plt.subplots(3, 2, figsize=(14, 8), sharex=True)
 
 # Linha 1: SoC
@@ -408,98 +439,112 @@ plt.grid()
 plt.tight_layout()
 plt.show(block=True)
 
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Gráfico de Fluxo de Caixa Mensal (usando cashflow) -------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-# # --- Gráfico de Fluxo de Caixa Mensal (usando cashflow) ---
-# import cashflow
-# meses = np.arange(len(problem.fluxo_caixa))
-# cf = cashflow.CashFlow(problem.fluxo_caixa)
-# cf.plot()
-# plt.title('Fluxo de Caixa Mensal')
-# plt.xlabel('Meses')
-# plt.ylabel('Fluxo de Caixa (USD)')
-# plt.show(block=True)
+import cashflow
 
-# # --- Gráfico de Degradação da Bateria ---
-# capacidade_bateria = np.ones(horizonte_analise_meses)
-# for i in range(horizonte_analise_meses):
-#     ciclos = i / vida_util_bateria_meses
-#     if ciclos <= 1:
-#         capacidade_bateria[i] = 1 - 0.2 * ciclos  # Linear até 80%
-#     else:
-#         capacidade_bateria[i] = 0.8  # Após vida útil, mantém 80%
-# plt.figure(figsize=(10, 4))
-# plt.plot(np.arange(horizonte_analise_meses), capacidade_bateria * 100)
-# plt.title('Degradação da Bateria ao Longo do Tempo')
-# plt.xlabel('Meses')
-# plt.ylabel('Capacidade Residual (%)')
-# plt.ylim(75, 105)
-# plt.grid()
-# plt.show(block=True)
+# Usar o fluxo de caixa da melhor solução já calculado durante a otimização
+if hasattr(problem, 'melhor_fluxo_caixa'):
+    cf = cashflow.CashFlow(problem.melhor_fluxo_caixa)
+    cf.plot()
+    plt.title('Fluxo de Caixa Mensal - Melhor Solução')
+    plt.xlabel('Meses')
+    plt.ylabel('Fluxo de Caixa (USD)')
+    plt.show(block=True)
+else:
+    print("Aviso: Fluxo de caixa da melhor solução não encontrado.")
 
-# # --- Gráfico de Degradação do Supercapacitor ---
-# capacidade_supercap = np.ones(horizonte_analise_meses)
-# for i in range(horizonte_analise_meses):
-#     horas = i / vida_util_supercap_meses
-#     if horas <= 1:
-#         capacidade_supercap[i] = 1 - 0.2 * horas  # Linear até 80%
-#     else:
-#         capacidade_supercap[i] = 0.8
-# plt.figure(figsize=(10, 4))
-# plt.plot(np.arange(horizonte_analise_meses), capacidade_supercap * 100, color='orange')
-# plt.title('Degradação do Supercapacitor ao Longo do Tempo')
-# plt.xlabel('Meses')
-# plt.ylabel('Capacidade Residual (%)')
-# plt.ylim(75, 105)
-# plt.grid()
-# plt.show(block=True)
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Gráfico de Degradação da Bateria ----------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-# # --- Gráfico de Potência e Corrente usando subplots ---
-# fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+capacidade_bateria = np.ones(horizonte_analise_meses)
+for i in range(horizonte_analise_meses):
+    ciclos = i / vida_util_bateria_meses
+    if ciclos <= 1:
+        capacidade_bateria[i] = 1 - 0.2 * ciclos  # Linear até 80%
+    else:
+        capacidade_bateria[i] = 0.8  # Após vida útil, mantém 80%
+plt.figure(figsize=(10, 4))
+plt.plot(np.arange(horizonte_analise_meses), capacidade_bateria * 100)
+plt.title('Degradação da Bateria ao Longo do Tempo')
+plt.xlabel('Meses')
+plt.ylabel('Capacidade Residual (%)')
+plt.ylim(75, 105)
+plt.grid()
+plt.show(block=True)
 
-# # Potência em kW
-# p_batt_kw = np.array(sim._p_batt) / 1e3
-# p_uc_kw = np.array(sim._p_uc) / 1e3
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Gráfico de Degradação do Supercapacitor ------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-# color_batt_p = 'tab:blue'
-# color_batt_i = 'tab:green'
-# color_uc_p = 'tab:red'
-# color_uc_i = 'tab:orange'
+capacidade_supercap = np.ones(horizonte_analise_meses)
+for i in range(horizonte_analise_meses):
+    horas = i / vida_util_supercap_meses
+    if horas <= 1:
+        capacidade_supercap[i] = 1 - 0.2 * horas  # Linear até 80%
+    else:
+        capacidade_supercap[i] = 0.8
+plt.figure(figsize=(10, 4))
+plt.plot(np.arange(horizonte_analise_meses), capacidade_supercap * 100, color='orange')
+plt.title('Degradação do Supercapacitor ao Longo do Tempo')
+plt.xlabel('Meses')
+plt.ylabel('Capacidade Residual (%)')
+plt.ylim(75, 105)
+plt.grid()
+plt.show(block=True)
 
-# # --- BATERIA ---
-# ax1.set_ylabel('Potência Bateria (kW)', color=color_batt_p)
-# l1 = ax1.plot(sim_time, p_batt_kw, label='Potência Bateria (kW)', color=color_batt_p)
-# ax1.tick_params(axis='y', labelcolor=color_batt_p)
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- Gráfico de Potência e Corrente usando subplots -------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-# ax1b = ax1.twinx()
-# ax1b.set_ylabel('Corrente Bateria (A)', color=color_batt_i)
-# l2 = ax1b.plot(sim_time, sim._i_bat, label='Corrente Bateria (A)', color=color_batt_i, linestyle='--')
-# ax1b.tick_params(axis='y', labelcolor=color_batt_i)
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
-# # Legenda combinada
-# lns1 = l1 + l2
-# labs1 = [l.get_label() for l in lns1]
-# ax1.legend(lns1, labs1, loc='upper right')
-# ax1.set_title('Bateria')
+# Potência em kW
+p_batt_kw = np.array(sim._p_batt) / 1e3
+p_uc_kw = np.array(sim._p_uc) / 1e3
 
-# # --- SUPERCAPACITOR ---
-# ax2.set_ylabel('Potência Supercapacitor (kW)', color=color_uc_p)
-# l3 = ax2.plot(sim_time, p_uc_kw, label='Potência Supercapacitor (kW)', color=color_uc_p)
-# ax2.tick_params(axis='y', labelcolor=color_uc_p)
+color_batt_p = 'tab:blue'
+color_batt_i = 'tab:green'
+color_uc_p = 'tab:red'
+color_uc_i = 'tab:orange'
 
-# ax2b = ax2.twinx()
-# ax2b.set_ylabel('Corrente Supercapacitor (A)', color=color_uc_i)
-# l4 = ax2b.plot(sim_time, sim._i_uc, label='Corrente Supercapacitor (A)', color=color_uc_i, linestyle='--')
-# ax2b.tick_params(axis='y', labelcolor=color_uc_i)
+# --- BATERIA ---
+ax1.set_ylabel('Potência Bateria (kW)', color=color_batt_p)
+l1 = ax1.plot(sim_time, p_batt_kw, label='Potência Bateria (kW)', color=color_batt_p)
+ax1.tick_params(axis='y', labelcolor=color_batt_p)
 
-# # Legenda combinada
-# lns2 = l3 + l4
-# labs2 = [l.get_label() for l in lns2]
-# ax2.legend(lns2, labs2, loc='upper right')
-# ax2.set_title('Supercapacitor')
+ax1b = ax1.twinx()
+ax1b.set_ylabel('Corrente Bateria (A)', color=color_batt_i)
+l2 = ax1b.plot(sim_time, sim._i_bat, label='Corrente Bateria (A)', color=color_batt_i, linestyle='--')
+ax1b.tick_params(axis='y', labelcolor=color_batt_i)
 
-# plt.xlabel('Amostra')
-# plt.tight_layout()
-# plt.show(block=True)
+# Legenda combinada
+lns1 = l1 + l2
+labs1 = [l.get_label() for l in lns1]
+ax1.legend(lns1, labs1, loc='upper right')
+ax1.set_title('Bateria')
 
-# --- Gráfico comparativo: Potência do sistema vs. soma das potências simuladas ---
+# --- SUPERCAPACITOR ---
+ax2.set_ylabel('Potência Supercapacitor (kW)', color=color_uc_p)
+l3 = ax2.plot(sim_time, p_uc_kw, label='Potência Supercapacitor (kW)', color=color_uc_p)
+ax2.tick_params(axis='y', labelcolor=color_uc_p)
+
+ax2b = ax2.twinx()
+ax2b.set_ylabel('Corrente Supercapacitor (A)', color=color_uc_i)
+l4 = ax2b.plot(sim_time, sim._i_uc, label='Corrente Supercapacitor (A)', color=color_uc_i, linestyle='--')
+ax2b.tick_params(axis='y', labelcolor=color_uc_i)
+
+# Legenda combinada
+lns2 = l3 + l4
+labs2 = [l.get_label() for l in lns2]
+ax2.legend(lns2, labs2, loc='upper right')
+ax2.set_title('Supercapacitor')
+
+plt.xlabel('Amostra')
+plt.tight_layout()
+plt.show(block=True)
+
 
