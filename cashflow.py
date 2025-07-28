@@ -51,7 +51,7 @@ class CashFlow:
                         f'{valor:.0f}', ha='center', va='bottom' if valor > 0 else 'top')
         
         plt.tight_layout()
-        plt.show()
+        plt.show(block = False  )
         
     def get_vpl(self, taxa_desconto_mensal):
         """

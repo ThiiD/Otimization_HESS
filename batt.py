@@ -88,6 +88,21 @@ class Batt():
         :return float: Energia total (Wh)
         """
         return self._total_energy
+
+    # def batteryDegradation(self, horizonte_analise_meses: int, vida_util_bateria_ciclos: int, duracao_ciclo_horas: int, taxa_disponibilidade: float) -> float:
+    #     """
+    #     Calcula a degradação baseada no horizonte de analise (meses), 
+    #     a vida util da bateria (ciclos), duração do ciclo de operação (horas) e a 
+    #     taxa de disponibilidade (%)
+    #     :param float horizonte_analise_meses: Horizonte de analise (meses)
+    #     :param float vida_util_bateria_ciclos: Vida util da bateria (ciclos)
+    #     :param float duracao_ciclo_horas: Duração do ciclo de operação (horas)
+    #     :param float taxa_disponibilidade: Taxa de disponibilidade (%)
+    #     :return float: Degradação da bateria (%)
+    #     """
+    #     horas_operacao_dia = 24 * taxa_disponibilidade
+    #     ciclos_por_dia = horas_operacao_dia / duracao_ciclo_horas
+        
     
     
     def updateEnergy(self, current: float, dt: float) -> (float | float | float):

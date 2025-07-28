@@ -24,9 +24,9 @@ horas_supercap_vida = 100000  # horas até 80% da capacidade
 horizonte_analise_meses = 12  # 10 anos
 
 # Taxa de desconto mensal (ex: 10% ao ano -> 0.10/12)
-taxa_desconto_anual = 0.10
+taxa_desconto_anual = 0.10                                                  # Taxa minima de atratividade anual 
 
-taxa_desconto_mensal = (1 + taxa_desconto_anual) ** (1/12) - 1
+taxa_desconto_mensal = (1 + taxa_desconto_anual) ** (1/12) - 1              # TMA mensal calculada a partir da TMA anual
 
 # Definição dos parametros do problema
 cot_dolar = 5.57            # 22/07/2025
@@ -153,8 +153,8 @@ class MyProblem(ElementwiseProblem):
         mes = 0
         custo_bateria = total_baterias * Pb
         custo_supercap = total_supercaps * Puc
-        proximo_reinv_bat = vida_util_bateria_meses
-        proximo_reinv_uc = vida_util_supercap_meses
+        proximo_reinv_bat = vida_util_bateria_meses                                # Essa parte não funciona direito ainda, deveria ser o calculo de quando a bateria deveria ser trocada
+        proximo_reinv_uc = vida_util_supercap_meses                                # Essa parte não funciona direito ainda, deveria ser o calculo de quando o supercapacitor deveria ser trocado
         while mes < horizonte_analise_meses:
             if mes == 0:
                 fluxo_caixa.append(-custo_inicial)  # Investimento inicial
@@ -453,20 +453,22 @@ import cashflow
 if hasattr(problem, 'melhor_fluxo_caixa'):
     cf = cashflow.CashFlow(problem.melhor_fluxo_caixa)
     cf.plot()
-    plt.title('Fluxo de Caixa Mensal - Melhor Solução')
-    plt.xlabel('Meses')
-    plt.ylabel('Fluxo de Caixa (USD)')
-    plt.show(block=True)
+    # plt.title('Fluxo de Caixa Mensal - Melhor Solução')
+    # plt.xlabel('Meses')
+    # plt.ylabel('Fluxo de Caixa (USD)')
+    # plt.show(block=True)
 else:
     print("Aviso: Fluxo de caixa da melhor solução não encontrado.")
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # ----------------------------------------------- Gráfico de Degradação da Bateria ----------------------------------------------------------------
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-
+horas_operacao_dia = 24 * taxa_disponibilidade
+ciclos_por_dia = horas_operacao_dia / duracao_ciclo_horas
+ciclos_por_mes = ciclos_por_dia * dias_por_mes
 capacidade_bateria = np.ones(horizonte_analise_meses)                       # Cria um vetor para análisar mes a mes a saude da bateria
 for i in range(horizonte_analise_meses):
-    porcentagem_de_ciclos = (i * sim.ciclos_por_mes) / ciclos_bateria_vida                                        
+    porcentagem_de_ciclos = (i * ciclos_por_mes) / ciclos_bateria_vida                                        
     if porcentagem_de_ciclos <= 1:
         capacidade_bateria[i] = 1 - 0.2 * porcentagem_de_ciclos                               # Linear até 80%
     else:
@@ -478,21 +480,22 @@ plt.xlabel('Meses')
 plt.ylabel('Capacidade Residual (%)')
 plt.ylim(75, 105)
 plt.grid()
-plt.show(block=True)
+plt.show(block=False)
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
 # ----------------------------------------------- Gráfico de Degradação do Supercapacitor ------------------------------------------------------------
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
-
+horas_operacao_mes = 24 * taxa_disponibilidade * dias_por_mes
 capacidade_supercap = np.ones(horizonte_analise_meses)
 for i in range(horizonte_analise_meses):
-    horas = i / vida_util_supercap_meses
-    if horas <= 1:
-        capacidade_supercap[i] = 1 - 0.2 * horas  # Linear até 80%
+    horas = 100 - 100*((i * horas_operacao_mes) / horas_supercap_vida)
+    if horas <= 0:
+        capacidade_supercap[i] = 0
     else:
-        capacidade_supercap[i] = 0.8
+        capacidade_supercap[i] = horas
+print(capacidade_supercap)
 plt.figure(figsize=(10, 4))
-plt.plot(np.arange(horizonte_analise_meses), capacidade_supercap * 100, color='orange')
+plt.plot(np.arange(horizonte_analise_meses), capacidade_supercap, color='orange')
 plt.title('Degradação do Supercapacitor ao Longo do Tempo')
 plt.xlabel('Meses')
 plt.ylabel('Capacidade Residual (%)')
@@ -500,55 +503,55 @@ plt.ylim(75, 105)
 plt.grid()
 plt.show(block=True)
 
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
-# ----------------------------------------------- Gráfico de Potência e Corrente usando subplots -------------------------------------------------
-# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# # ----------------------------------------------------------------------------------------------------------------------------------------------------
+# # ----------------------------------------------- Gráfico de Potência e Corrente usando subplots -------------------------------------------------
+# # ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+# fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
-# Potência em kW
-p_batt_kw = np.array(sim._p_batt) / 1e3
-p_uc_kw = np.array(sim._p_uc) / 1e3
+# # Potência em kW
+# p_batt_kw = np.array(sim._p_batt) / 1e3
+# p_uc_kw = np.array(sim._p_uc) / 1e3
 
-color_batt_p = 'tab:blue'
-color_batt_i = 'tab:green'
-color_uc_p = 'tab:red'
-color_uc_i = 'tab:orange'
+# color_batt_p = 'tab:blue'
+# color_batt_i = 'tab:green'
+# color_uc_p = 'tab:red'
+# color_uc_i = 'tab:orange'
 
-# --- BATERIA ---
-ax1.set_ylabel('Potência Bateria (kW)', color=color_batt_p)
-l1 = ax1.plot(sim_time, p_batt_kw, label='Potência Bateria (kW)', color=color_batt_p)
-ax1.tick_params(axis='y', labelcolor=color_batt_p)
+# # --- BATERIA ---
+# ax1.set_ylabel('Potência Bateria (kW)', color=color_batt_p)
+# l1 = ax1.plot(sim_time, p_batt_kw, label='Potência Bateria (kW)', color=color_batt_p)
+# ax1.tick_params(axis='y', labelcolor=color_batt_p)
 
-ax1b = ax1.twinx()
-ax1b.set_ylabel('Corrente Bateria (A)', color=color_batt_i)
-l2 = ax1b.plot(sim_time, sim._i_bat, label='Corrente Bateria (A)', color=color_batt_i, linestyle='--')
-ax1b.tick_params(axis='y', labelcolor=color_batt_i)
+# ax1b = ax1.twinx()
+# ax1b.set_ylabel('Corrente Bateria (A)', color=color_batt_i)
+# l2 = ax1b.plot(sim_time, sim._i_bat, label='Corrente Bateria (A)', color=color_batt_i, linestyle='--')
+# ax1b.tick_params(axis='y', labelcolor=color_batt_i)
 
-# Legenda combinada
-lns1 = l1 + l2
-labs1 = [l.get_label() for l in lns1]
-ax1.legend(lns1, labs1, loc='upper right')
-ax1.set_title('Bateria')
+# # Legenda combinada
+# lns1 = l1 + l2
+# labs1 = [l.get_label() for l in lns1]
+# ax1.legend(lns1, labs1, loc='upper right')
+# ax1.set_title('Bateria')
 
-# --- SUPERCAPACITOR ---
-ax2.set_ylabel('Potência Supercapacitor (kW)', color=color_uc_p)
-l3 = ax2.plot(sim_time, p_uc_kw, label='Potência Supercapacitor (kW)', color=color_uc_p)
-ax2.tick_params(axis='y', labelcolor=color_uc_p)
+# # --- SUPERCAPACITOR ---
+# ax2.set_ylabel('Potência Supercapacitor (kW)', color=color_uc_p)
+# l3 = ax2.plot(sim_time, p_uc_kw, label='Potência Supercapacitor (kW)', color=color_uc_p)
+# ax2.tick_params(axis='y', labelcolor=color_uc_p)
 
-ax2b = ax2.twinx()
-ax2b.set_ylabel('Corrente Supercapacitor (A)', color=color_uc_i)
-l4 = ax2b.plot(sim_time, sim._i_uc, label='Corrente Supercapacitor (A)', color=color_uc_i, linestyle='--')
-ax2b.tick_params(axis='y', labelcolor=color_uc_i)
+# ax2b = ax2.twinx()
+# ax2b.set_ylabel('Corrente Supercapacitor (A)', color=color_uc_i)
+# l4 = ax2b.plot(sim_time, sim._i_uc, label='Corrente Supercapacitor (A)', color=color_uc_i, linestyle='--')
+# ax2b.tick_params(axis='y', labelcolor=color_uc_i)
 
-# Legenda combinada
-lns2 = l3 + l4
-labs2 = [l.get_label() for l in lns2]
-ax2.legend(lns2, labs2, loc='upper right')
-ax2.set_title('Supercapacitor')
+# # Legenda combinada
+# lns2 = l3 + l4
+# labs2 = [l.get_label() for l in lns2]
+# ax2.legend(lns2, labs2, loc='upper right')
+# ax2.set_title('Supercapacitor')
 
-plt.xlabel('Amostra')
-plt.tight_layout()
-plt.show(block=True)
+# plt.xlabel('Amostra')
+# plt.tight_layout()
+# plt.show(block=True)
 
 
